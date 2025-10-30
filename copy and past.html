@@ -83,6 +83,20 @@
         <div class="small">Note: This stores data locally in your browser using localStorage. It's not secure for sensitive data.</div>
     </footer>
 
+    <!-- admin panel -->
+    <div id="adminOverlay" class="overlay" style="display:none">
+        <div class="card" style="width:90%;max-width:800px;max-height:90vh;overflow-y:auto">
+            <h2 style="margin-top:0">Admin Panel</h2>
+            <div id="adminContent" style="margin:12px 0">
+                <div class="small">Loading user data...</div>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button id="refreshAdminBtn">Refresh Data</button>
+                <button id="closeAdminBtn" class="btn-ghost">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- edit modal -->
     <div id="editOverlay" class="overlay" style="display:none">
         <div class="card">
@@ -248,6 +262,67 @@
 
             const createBtn = document.getElementById('createBtn');
             const loginMsg = document.getElementById('loginMsg');
+            const adminOverlay = document.getElementById('adminOverlay');
+            const adminContent = document.getElementById('adminContent');
+            const refreshAdminBtn = document.getElementById('refreshAdminBtn');
+            const closeAdminBtn = document.getElementById('closeAdminBtn');
+
+            // Admin panel functionality
+            function showAdminPanel() {
+                if(currentUser.toLowerCase() !== 'rokostrydom' || currentPin !== '4609') return;
+                
+                adminOverlay.style.display = 'flex';
+                refreshAdminData();
+            }
+
+            function refreshAdminData() {
+                const users = [];
+                // Scan localStorage for all user data
+                for(let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    if(key.startsWith('rmp_user:')) {
+                        try {
+                            const [_, username, pin] = key.split(':');
+                            const items = JSON.parse(localStorage.getItem(key));
+                            users.push({username, pin, items});
+                        } catch(e) {}
+                    }
+                }
+
+                // Generate admin panel HTML
+                let html = `<div style="margin-bottom:12px"><strong>${users.length}</strong> users found</div>`;
+                
+                users.forEach(user => {
+                    html += `
+                    <div style="margin-bottom:24px">
+                        <h3 style="margin:0 0 8px">User: ${user.username}</h3>
+                        <div class="small">PIN: ${user.pin}</div>
+                        <div style="margin-top:8px">
+                            <strong>Saved Items (${user.items.length}):</strong>
+                            ${user.items.length === 0 ? 
+                                '<div class="small">No items saved</div>' :
+                                '<ul style="margin:8px 0">' + 
+                                user.items.map(item => `<li>${item}</li>`).join('') +
+                                '</ul>'
+                            }
+                        </div>
+                    </div>`;
+                });
+
+                adminContent.innerHTML = html;
+            }
+
+            refreshAdminBtn.addEventListener('click', refreshAdminData);
+            closeAdminBtn.addEventListener('click', () => {
+                adminOverlay.style.display = 'none';
+            });
+
+            // Add Ctrl+Shift+A shortcut for admin panel
+            window.addEventListener('keydown', (e) => {
+                if(e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'a' && currentUser) {
+                    showAdminPanel();
+                }
+            });
 
             function showLoginMessage(text, color){
                 loginMsg.textContent = text || '';
@@ -265,6 +340,14 @@
                 renderSaved();
                 // show owner's originals if this is the owner account
                 renderBuiltIns(currentUser);
+                // Show admin button for owner account
+                if(currentUser.toLowerCase() === 'rokostrydom' && currentPin === '4609') {
+                    const adminBtn = document.createElement('button');
+                    adminBtn.textContent = 'Admin Panel';
+                    adminBtn.className = 'btn-ghost';
+                    adminBtn.onclick = showAdminPanel;
+                    document.querySelector('.controls').appendChild(adminBtn);
+                }
             }
 
             signInBtn.addEventListener('click', ()=>{
