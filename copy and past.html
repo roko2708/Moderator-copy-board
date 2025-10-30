@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Moderation Copy and Paste Board</title>
+    <style>
+        :root{font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+        body{margin:18px;background:#f3f4f6;color:#111}
+        header{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+        h1{font-size:18px;margin:0}
+        .note{font-size:12px;color:#555}
+
+        /* login modal */
+        .overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.4)}
+        .card{background:#fff;padding:18px;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.12);width:360px;max-width:calc(100% - 32px)}
+        .form-row{display:flex;gap:8px;margin-bottom:8px}
+        input[type=text], input[type=password], textarea{flex:1;padding:8px;border:1px solid #d1d5db;border-radius:6px}
+        button{padding:8px 12px;border-radius:6px;border:none;background:#2563eb;color:#fff;cursor:pointer}
+        .btn-ghost{background:#e5e7eb;color:#111}
+
+        /* main UI */
+        .controls{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+        .copy-box{
+            display:flex;align-items:center;gap:8px;margin-bottom:8px;
+            padding:4px;border-radius:8px;cursor:move;
+            position:relative;
+            transition: transform .15s ease, box-shadow .15s ease;
+        }
+        .copy-box::before {
+            content: "⋮⋮";
+            color: #9ca3af;
+            margin-right: 4px;
+            cursor: move;
+        }
+        .copy-box.dragging{
+            background:#fff;
+            box-shadow:0 4px 12px rgba(0,0,0,.1);
+            transform:scale(1.02);
+        }
+        .copy-text{padding:8px 12px;border:1px solid #e5e7eb;border-radius:6px;background:#fafafa;min-width:240px}
+        .copy-btn{padding:8px 12px;background:#10b981;color:#fff;border-radius:6px;border:none;cursor:pointer}
+        .copy-btn:active{transform:translateY(1px)}
+
+        .saved-list{margin-top:8px}
+        .small{font-size:12px;color:#6b7280}
+
+        footer{margin-top:18px}
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Moderation Copy and Paste Board</h1>
+        <div class="note">Quick templates and per-user saved items (local-only)</div>
+    </header>
+
+    <main id="app">
+        <div id="anon-templates">
+            <!-- built-in templates (always available) -->
+        </div>
+
+        <section id="account-area" style="display:none">
+            <div class="controls">
+                <div class="small">Signed in as <strong id="current-user"></strong></div>
+                <button id="logoutBtn" class="btn-ghost">Log out</button>
+            </div>
+
+            <div>
+                <label class="small">Add a saved text</label>
+                <div class="form-row">
+                    <input type="text" id="newTextInput" placeholder="Type message to save" />
+                    <button id="saveTextBtn">Save</button>
+                </div>
+            </div>
+
+            <div class="saved-list" id="savedList"></div>
+        </section>
+
+        <section id="signed-out-note" class="small">Sign in to access your saved items. Username can be any name; PIN must be exactly 4 digits.</section>
+    </main>
+
+    <footer>
+        <div class="small">Note: This stores data locally in your browser using localStorage. It's not secure for sensitive data.</div>
+    </footer>
+
+    <!-- edit modal -->
+    <div id="editOverlay" class="overlay" style="display:none">
+        <div class="card">
+            <h2 style="margin-top:0">Edit saved text</h2>
+            <div class="form-row">
+                <textarea id="editInput" rows="3" style="width:100%" placeholder="Edit your saved text"></textarea>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button id="saveEditBtn">Save changes</button>
+                <button id="cancelEditBtn" class="btn-ghost">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- login overlay -->
+    <div id="loginOverlay" class="overlay">
+        <div class="card">
+            <h2 style="margin-top:0">Sign in / Create account</h2>
+            <div class="form-row">
+                <input type="text" id="username" placeholder="Username" />
+                <input type="password" id="pin" placeholder="4-digit PIN" maxlength="4" />
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button id="signInBtn">Sign in</button>
+                <button id="createBtn" class="btn-ghost">Create account</button>
+                <button id="helpBtn" class="btn-ghost">Help</button>
+            </div>
+            <div id="loginMsg" class="small" style="margin-top:8px;color:#6b7280"></div>
+            <p class="small" style="margin-top:8px">If this is your first time, you can create an account which will store saved items locally in your browser (localStorage). PIN is used locally only.</p>
+        </div>
+    </div>
+
+    <script>
+        // No more built-in templates - users manage their own content
+        const builtIn = [];
+
+        // --- helpers for storage ---
+        function storageKey(user, pin){
+            return `rmp_user:${user.trim().toLowerCase()}:${pin}`;
+        }
+
+        function loadUserItems(user, pin){
+            try{
+                const raw = localStorage.getItem(storageKey(user,pin));
+                return raw ? JSON.parse(raw) : [];
+            }catch(e){return []}
+        }
+        function saveUserItems(user, pin, items){
+            localStorage.setItem(storageKey(user,pin), JSON.stringify(items));
+        }
+
+        // --- UI wiring ---
+        const loginOverlay = document.getElementById('loginOverlay');
+        const signInBtn = document.getElementById('signInBtn');
+        const helpBtn = document.getElementById('helpBtn');
+        const usernameInput = document.getElementById('username');
+        const pinInput = document.getElementById('pin');
+        const anonTemplatesDiv = document.getElementById('anon-templates');
+        const savedList = document.getElementById('savedList');
+        const accountArea = document.getElementById('account-area');
+        const signedOutNote = document.getElementById('signed-out-note');
+        const currentUserSpan = document.getElementById('current-user');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const newTextInput = document.getElementById('newTextInput');
+        const saveTextBtn = document.getElementById('saveTextBtn');
+
+        // No more preset account or auto-fill credentials for security
+
+        let currentUser = null;
+        let currentPin = null;
+        let currentItems = [];
+
+        // render built-in templates
+        // These originals are now private: show them only for the owner account (rokostrydom / 4609)
+        function renderBuiltIns(forUser){
+            anonTemplatesDiv.innerHTML = '';
+            if(!forUser || forUser.trim().toLowerCase() !== 'rokostrydom' || currentPin !== '4609'){
+                // do not render originals for other users
+                return;
+            }
+            builtIn.forEach((t) =>{
+                const box = document.createElement('div');
+                box.className = 'copy-box';
+                const span = document.createElement('div');
+                span.className = 'copy-text';
+                span.textContent = t;
+                const btn = document.createElement('button');
+                btn.className = 'copy-btn';
+                btn.textContent = 'Copy';
+                btn.addEventListener('click', ()=>copyTextDirect(t, btn));
+                box.appendChild(span);
+                box.appendChild(btn);
+                anonTemplatesDiv.appendChild(box);
+            });
+        }
+
+        function renderSaved(){
+            savedList.innerHTML = '';
+            if(!currentUser) return;
+            if(currentItems.length === 0){
+                savedList.innerHTML = '<div class="small">No saved items yet.</div>';
+                return;
+            }
+            currentItems.forEach((t, i) =>{
+                const box = document.createElement('div');
+                box.className = 'copy-box';
+                box.draggable = true;
+                box.dataset.index = i;
+                const span = document.createElement('div');
+                span.className = 'copy-text';
+                span.textContent = t;
+
+                const copyBtn = document.createElement('button');
+                copyBtn.className = 'copy-btn';
+                copyBtn.textContent = 'Copy';
+                copyBtn.addEventListener('click', ()=>copyTextDirect(t, copyBtn));
+
+                const editBtn = document.createElement('button');
+                editBtn.textContent = 'Edit';
+                editBtn.className = 'btn-ghost';
+                editBtn.addEventListener('click', ()=>openEdit(t, i));
+
+                const delBtn = document.createElement('button');
+                delBtn.textContent = 'Delete';
+                delBtn.className = 'btn-ghost';
+                delBtn.addEventListener('click', ()=>{
+                    if(!confirm('Delete this saved item?')) return;
+                    currentItems.splice(i,1);
+                    saveUserItems(currentUser,currentPin,currentItems);
+                    renderSaved();
+                });
+
+                box.appendChild(span);
+                box.appendChild(copyBtn);
+                box.appendChild(editBtn);
+                box.appendChild(delBtn);
+                savedList.appendChild(box);
+            });
+        }
+
+        // copy helper with feedback
+        function copyTextDirect(text, button){
+            if(navigator.clipboard){
+                navigator.clipboard.writeText(text).then(()=>{
+                    const old = button.textContent;
+                    button.textContent = 'Copied!';
+                    setTimeout(()=>button.textContent = old,1500);
+                }).catch(err=>{
+                    alert('Copy failed: '+err);
+                });
+            } else {
+                const ta = document.createElement('textarea');
+                ta.value = text; document.body.appendChild(ta); ta.select();
+                try{document.execCommand('copy'); alert('Copied');}catch(e){alert('Copy failed')}
+                document.body.removeChild(ta);
+            }
+        }
+
+        // sign in / signup logic
+        function validPin(pin){
+            return /^\d{4}$/.test(pin);
+        }
+
+            const createBtn = document.getElementById('createBtn');
+            const loginMsg = document.getElementById('loginMsg');
+
+            function showLoginMessage(text, color){
+                loginMsg.textContent = text || '';
+                loginMsg.style.color = color || '#6b7280';
+            }
+
+            function doSignIn(u, p){
+                currentUser = u;
+                currentPin = p;
+                currentItems = loadUserItems(currentUser,currentPin);
+                loginOverlay.style.display = 'none';
+                accountArea.style.display = 'block';
+                signedOutNote.style.display = 'none';
+                currentUserSpan.textContent = `${currentUser} (PIN: ****)`;
+                renderSaved();
+                // show owner's originals if this is the owner account
+                renderBuiltIns(currentUser);
+            }
+
+            signInBtn.addEventListener('click', ()=>{
+                const u = usernameInput.value.trim();
+                const p = pinInput.value.trim();
+                if(!u){ showLoginMessage('Enter username', 'crimson'); return; }
+                if(!validPin(p)){ showLoginMessage('PIN must be exactly 4 digits', 'crimson'); return; }
+                // check existence
+                const k = storageKey(u,p);
+                if(!localStorage.getItem(k)){
+                    showLoginMessage('Account not found — click Create account to make one.', 'crimson');
+                    return;
+                }
+                showLoginMessage('Signing in…', '#16a34a');
+                setTimeout(()=>{
+                    showLoginMessage('');
+                    doSignIn(u,p);
+                },200);
+            });
+
+            helpBtn.addEventListener('click', ()=>{
+                showLoginMessage('Choose any username and a 4-digit PIN. This is stored only in your browser (localStorage). Don\'t use real passwords.');
+            });
+
+            createBtn.addEventListener('click', ()=>{
+                const u = usernameInput.value.trim();
+                const p = pinInput.value.trim();
+                if(!u){ showLoginMessage('Enter username to create', 'crimson'); return; }
+                if(!validPin(p)){ showLoginMessage('PIN must be exactly 4 digits', 'crimson'); return; }
+                const k = storageKey(u,p);
+                if(localStorage.getItem(k)){
+                    showLoginMessage('Account already exists. Use Sign in.', 'crimson');
+                    return;
+                }
+                // create empty account
+                saveUserItems(u,p,[]);
+                showLoginMessage('Account created — signing in…', '#16a34a');
+                setTimeout(()=>{ doSignIn(u,p); },250);
+            });
+
+        logoutBtn.addEventListener('click', ()=>{
+            currentUser = null; currentPin = null; currentItems = [];
+            accountArea.style.display = 'none';
+            signedOutNote.style.display = 'block';
+            loginOverlay.style.display = 'flex';
+            usernameInput.value = '';
+            pinInput.value = '';
+            // hide built-in originals when signed out
+            renderBuiltIns(null);
+        });
+
+        saveTextBtn.addEventListener('click', ()=>{
+            const txt = newTextInput.value.trim();
+            if(!txt) return alert('Type something to save');
+            // prevent duplicates
+            if(currentItems.includes(txt)) return alert('Already saved');
+            currentItems.unshift(txt);
+            saveUserItems(currentUser,currentPin,currentItems);
+            newTextInput.value = '';
+            renderSaved();
+        });
+
+        // Enter on inputs
+        pinInput.addEventListener('keyup', (e)=>{ if(e.key === 'Enter') signInBtn.click(); });
+        usernameInput.addEventListener('keyup', (e)=>{ if(e.key === 'Enter') pinInput.focus(); });
+
+    // Edit functionality
+    const editOverlay = document.getElementById('editOverlay');
+    const editInput = document.getElementById('editInput');
+    const saveEditBtn = document.getElementById('saveEditBtn');
+    const cancelEditBtn = document.getElementById('cancelEditBtn');
+    let editingIndex = -1;
+
+    function openEdit(text, index) {
+        editingIndex = index;
+        editInput.value = text;
+        editOverlay.style.display = 'flex';
+        editInput.focus();
+        editInput.select();
+    }
+
+    saveEditBtn.addEventListener('click', ()=>{
+        const newText = editInput.value.trim();
+        if(!newText) return;
+        if(editingIndex >= 0 && editingIndex < currentItems.length){
+            currentItems[editingIndex] = newText;
+            saveUserItems(currentUser, currentPin, currentItems);
+            renderSaved();
+        }
+        editOverlay.style.display = 'none';
+    });
+
+    cancelEditBtn.addEventListener('click', ()=>{
+        editOverlay.style.display = 'none';
+    });
+
+    // Drag and drop reordering
+    let draggedItem = null;
+    let draggedIndex = -1;
+
+    savedList.addEventListener('dragstart', (e) => {
+        draggedItem = e.target.closest('.copy-box');
+        if(!draggedItem) return;
+        draggedIndex = parseInt(draggedItem.dataset.index);
+        setTimeout(() => draggedItem.classList.add('dragging'), 0);
+        e.dataTransfer.effectAllowed = 'move';
+    });
+
+    savedList.addEventListener('dragend', (e) => {
+        if(!draggedItem) return;
+        draggedItem.classList.remove('dragging');
+        draggedItem = null;
+        draggedIndex = -1;
+    });
+
+    savedList.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        if(!draggedItem) return;
+        
+        const box = e.target.closest('.copy-box');
+        if(!box || box === draggedItem) return;
+
+        const targetIndex = parseInt(box.dataset.index);
+        if(targetIndex === draggedIndex) return;
+
+        // Get bounding rect of target box
+        const rect = box.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        
+        // If mouse is above middle, put draggedItem before box
+        // If mouse is below middle, put draggedItem after box
+        const moveAfter = e.clientY > midY;
+        
+        // Move item in array
+        const item = currentItems[draggedIndex];
+        currentItems.splice(draggedIndex, 1);
+        currentItems.splice(moveAfter ? targetIndex + 1 : targetIndex, 0, item);
+        
+        // Save and re-render
+        saveUserItems(currentUser, currentPin, currentItems);
+        renderSaved();
+        
+        // Update dragged item reference after re-render
+        draggedItem = savedList.children[moveAfter ? targetIndex + 1 : targetIndex];
+        draggedIndex = moveAfter ? targetIndex + 1 : targetIndex;
+        draggedItem.classList.add('dragging');
+    });
+
+    // Optional: allow opening login overlay with a hotkey (Ctrl+Shift+L)
+    window.addEventListener('keydown', (e)=>{
+        if(e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'l'){
+            loginOverlay.style.display = 'flex';
+            usernameInput.focus();
+        }
+    });
+
+    </script>
+</body>
+</html>
